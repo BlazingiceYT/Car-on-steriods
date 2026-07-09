@@ -37,10 +37,10 @@ pub struct Car {
 }
 
 #[derive(Component)]
-struct GlbCarModel;
+pub struct GlbCarModel;
 
 #[derive(Component)]
-struct FallbackCarModel;
+pub struct FallbackCarModel;
 
 /// Spawns the car entity with two children: your car.glb (shown by default)
 /// and a low-poly box car (hidden by default, shown automatically if the
