@@ -1,0 +1,17 @@
+[package]
+name = "blazingice_bevy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# "webgl2" is the broad-compatibility web renderer backend. Swap it for
+# "webgpu" later if you want a more modern backend at the cost of dropping
+# older-browser support — they're mutually exclusive.
+bevy = { version = "0.19", features = ["webgl2"] }
+
+[profile.release]
+opt-level = "z"    # optimize for size, not speed — this is what actually shrinks the .wasm
+lto = true          # whole-program link-time optimization
+codegen-units = 1   # slower build, smaller/faster output
+panic = "abort"     # drop unwinding tables — wasm32 doesn't need them here
+strip = true        # strip debug symbols from the final binary
