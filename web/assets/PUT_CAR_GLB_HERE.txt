@@ -1,0 +1,9 @@
+Put your car.glb file in this folder, named exactly "car.glb".
+
+src/car.rs loads it with: .from_asset("car.glb")
+
+If you want a different filename, open src/car.rs and change the string in
+that line to match.
+
+Delete this text file once car.glb is in here — it's just a placeholder so
+the folder isn't empty (git can't track empty folders).
