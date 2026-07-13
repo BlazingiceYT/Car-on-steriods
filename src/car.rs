@@ -3,37 +3,61 @@ use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 
-// ─── Physics constants — copied 1:1 from the original JS ───
-const BASE_MAX_SPEED: f32 = 50.0; // JS: BASE_MAX_SPEED
-const NITRO_MAX_SPEED: f32 = 62.5; // JS: NITRO_MAX_SPEED
-const ACCEL: f32 = 26.0; // JS: ACCEL
-const NITRO_ACCEL: f32 = 48.0; // JS: NITRO_ACCEL
-const BRAKE: f32 = 42.0; // JS: BRAKE
-const FRICTION: f32 = 14.0; // JS: FRIC
-const STEER_SPEED: f32 = 2.5; // JS: STEER_SPD (rad/s ramp rate)
-const MAX_STEER: f32 = 0.46; // JS: MAX_STEER (radians, ~26°)
-const TURN_BASE: f32 = 0.025; // JS: TURN_BASE (steer angle -> heading change)
-const GRAVITY: f32 = 20.0; // JS: GRAVITY
+// ─── Speed/acceleration constants — units are km/h (and km/h-per-second) ───
+pub const BASE_MAX_SPEED: f32 = 125.0;
+pub const NITRO_MAX_SPEED: f32 = 175.0;
+const ACCEL: f32 = 49.0;         // normal acceleration (lowered 25% from prior tuning)
+const NITRO_ACCEL: f32 = 40.0;   // slower than normal — nitro ramps up, doesn't snap
+const BRAKE: f32 = 105.0;
+const FRICTION: f32 = 35.0;
 
-pub const SPAWN_X: f32 = 0.0; // JS: carX = 0
-pub const SPAWN_Z: f32 = 15.0; // JS: carZ = 15
+const STEER_SPEED: f32 = 2.5;
+const MAX_STEER: f32 = 0.46;
+const TURN_DRIFT: f32 = 0.025;   // heading change rate while actually drifting
+const TURN_GRIP: f32 = 0.014;    // heading change rate for normal (non-drift) turning — gentler, not sharp
+const DRIFT_MIN_SPEED: f32 = 55.0;
+const GRAVITY: f32 = 20.0;
 
-// Tweak these three if car.glb looks wrong once it loads — same tunable
-// constants your original JS exposed for exactly this purpose.
+const NITRO_DRAIN_PER_SEC: f32 = 40.0;
+const NITRO_RECHARGE_PER_SEC: f32 = 15.0;
+
+pub const SPAWN_X: f32 = 0.0;
+pub const SPAWN_Z: f32 = 15.0;
+
 const CAR_MODEL_SCALE: f32 = 1.0;
 const CAR_MODEL_YAW_OFFSET: f32 = std::f32::consts::FRAC_PI_2;
 const CAR_MODEL_Y_OFFSET: f32 = 0.0;
 
 #[derive(Component, Debug, Default)]
 pub struct Car {
-    pub speed: f32,             // JS: speed
-    pub heading: f32,           // JS: carAngle (radians around Y)
-    pub steer_angle: f32,       // JS: steerAngle
-    pub drift_angle: f32,       // JS: driftAngle
-    pub vertical_velocity: f32, // JS: carVY
-    pub in_air: bool,           // JS: inAir
-    pub air_time: f32,          // JS: airTime
-    pub pitch: f32,             // JS: carGroup.rotation.x
+    pub speed: f32,
+    pub heading: f32,
+    pub steer_angle: f32,
+    pub drift_angle: f32,
+    pub vertical_velocity: f32,
+    pub in_air: bool,
+    pub air_time: f32,
+    pub pitch: f32,
+}
+
+#[derive(Resource)]
+pub struct NitroState {
+    pub amount: f32, // 0.0 to 100.0
+}
+
+impl Default for NitroState {
+    fn default() -> Self {
+        Self { amount: 100.0 }
+    }
+}
+
+#[derive(Resource)]
+pub struct NitroParticleTimer(pub Timer);
+
+#[derive(Component)]
+pub struct NitroParticle {
+    pub velocity: Vec3,
+    pub lifetime: Timer,
 }
 
 #[derive(Component)]
@@ -42,9 +66,6 @@ pub struct GlbCarModel;
 #[derive(Component)]
 pub struct FallbackCarModel;
 
-/// Spawns the car entity with two children: your car.glb (shown by default)
-/// and a low-poly box car (hidden by default, shown automatically if the
-/// glb fails to load). Mirrors the original's GLTFLoader + fallback logic.
 pub fn setup_car(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -72,23 +93,20 @@ pub fn setup_car(
             parent.spawn((
                 FallbackCarModel,
                 Visibility::Hidden,
-                Mesh3d(meshes.add(Cuboid::new(2.0, 0.62, 4.2))), // JS body dims
-                MeshMaterial3d(materials.add(Color::srgb(0.90, 0.24, 0.24))), // JS 0xe53e3e
+                Mesh3d(meshes.add(Cuboid::new(2.0, 0.62, 4.2))),
+                MeshMaterial3d(materials.add(Color::srgb(0.90, 0.24, 0.24))),
                 Transform::from_xyz(0.0, 0.5, 0.0),
             ));
             parent.spawn((
                 FallbackCarModel,
                 Visibility::Hidden,
-                Mesh3d(meshes.add(Cuboid::new(1.38, 0.5, 2.0))), // JS cabin dims
-                MeshMaterial3d(materials.add(Color::srgb(0.10, 0.13, 0.17))), // JS 0x1a202c
+                Mesh3d(meshes.add(Cuboid::new(1.38, 0.5, 2.0))),
+                MeshMaterial3d(materials.add(Color::srgb(0.10, 0.13, 0.17))),
                 Transform::from_xyz(0.0, 1.01, -0.2),
             ));
         });
 }
 
-/// If car.glb fails to load (missing file, wrong path/name, bad export),
-/// swap to the box car instead of leaving the player invisible. Mirrors the
-/// original's GLTFLoader error-callback fallback.
 pub fn car_model_fallback_system(
     asset_server: Res<AssetServer>,
     mut glb_query: Query<(&WorldAssetRoot, &mut Visibility), (With<GlbCarModel>, Without<FallbackCarModel>)>,
@@ -107,22 +125,30 @@ pub fn car_model_fallback_system(
 pub fn movement_system(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    mut nitro: ResMut<NitroState>,
     mut query: Query<(&mut Car, &mut Transform)>,
 ) {
     let Ok((mut car, mut transform)) = query.single_mut() else { return; };
 
-    // Same 33ms clamp the original clock.getDelta() used, so a stalled tab
-    // doesn't fling the car across the map on the next frame.
     let dt = time.delta_secs().min(0.0333);
 
     let gas = keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp);
     let brake = keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown);
     let left = keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft);
     let right = keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight);
-    let nitro = keys.pressed(KeyCode::KeyN);
 
-    let max_speed = if nitro { NITRO_MAX_SPEED } else { BASE_MAX_SPEED };
-    let accel = if nitro { NITRO_ACCEL } else { ACCEL };
+    // ── Nitro ──
+    let nitro_held = keys.pressed(KeyCode::KeyN);
+    let nitro_active = nitro_held && nitro.amount > 0.0;
+
+    if nitro_active {
+        nitro.amount = (nitro.amount - NITRO_DRAIN_PER_SEC * dt).max(0.0);
+    } else {
+        nitro.amount = (nitro.amount + NITRO_RECHARGE_PER_SEC * dt).min(100.0);
+    }
+
+    let max_speed = if nitro_active { NITRO_MAX_SPEED } else { BASE_MAX_SPEED };
+    let accel = if nitro_active { NITRO_ACCEL } else { ACCEL };
 
     // Speed — accelerate, brake/reverse, or coast down under friction.
     if gas {
@@ -136,10 +162,17 @@ pub fn movement_system(
         if car.speed < 0.0 {
             car.speed = (car.speed + FRICTION * dt).min(0.0);
         }
+        // If nitro was pushing you over the normal cap and you let off nitro,
+        // let friction pull you back down toward the normal max naturally —
+        // no special-case needed since friction already reduces speed.
+    }
+    // If nitro just ran out mid-boost, don't let speed sit above the normal
+    // cap forever — bleed it down toward BASE_MAX_SPEED under friction.
+    if !nitro_active && car.speed > BASE_MAX_SPEED {
+        car.speed = (car.speed - FRICTION * dt).max(BASE_MAX_SPEED);
     }
 
-    // Steering — ramps toward MAX_STEER while held, springs back to center
-    // when released.
+    // Steering — ramps toward MAX_STEER while held, springs back to center.
     if left {
         car.steer_angle = (car.steer_angle + STEER_SPEED * dt).min(MAX_STEER);
     } else if right {
@@ -148,14 +181,15 @@ pub fn movement_system(
         car.steer_angle *= 1.0 - 11.0 * dt;
     }
 
-    // Drift detection — identical thresholds to the original.
+    // Drift only happens if you brake AND turn. Turning without braking
+    // uses the gentler TURN_GRIP rate instead — not sharp.
     let is_drifting =
-        car.speed.abs() > 22.0 && car.steer_angle.abs() > 0.16 && (brake || left || right);
+        brake && (left || right) && car.speed.abs() > DRIFT_MIN_SPEED && car.steer_angle.abs() > 0.16;
 
     if car.speed.abs() > 0.5 {
         let direction = if car.speed > 0.0 { 1.0 } else { -1.0 };
-        let drift_multiplier = if is_drifting { 1.65 } else { 1.0 };
-        car.heading += car.steer_angle * direction * TURN_BASE * drift_multiplier;
+        let turn_rate = if is_drifting { TURN_DRIFT * 1.65 } else { TURN_GRIP };
+        car.heading += car.steer_angle * direction * turn_rate;
     }
 
     if is_drifting {
@@ -165,17 +199,11 @@ pub fn movement_system(
         car.drift_angle += (0.0 - car.drift_angle) * 6.0 * dt;
     }
 
-    // Horizontal movement. Note the asymmetry carried over from the
-    // original: the car SLIDES along (heading - drift_angle * 0.32) but
-    // visually POINTS along (heading + drift_angle) — that gap is what
-    // sells the drift, and it's easy to accidentally "fix" away.
     let move_angle = car.heading - car.drift_angle * 0.32;
     transform.translation.x += move_angle.sin() * car.speed * dt;
     transform.translation.z += move_angle.cos() * car.speed * dt;
 
     // ── Vertical / jump physics over terrain bumps ──
-    // Inert on today's flat placeholder ground (ground_y is always 0), but
-    // fully wired up for the moment you plug in real bumpy terrain.
     let ground_y =
         crate::world::terrain_height_at(transform.translation.x, transform.translation.z);
 
@@ -208,4 +236,69 @@ pub fn movement_system(
 
     transform.rotation =
         Quat::from_rotation_y(car.heading + car.drift_angle) * Quat::from_rotation_x(car.pitch);
+}
+
+/// Spawns a couple of small glowing particles behind the car each tick while
+/// nitro is active. Purely cosmetic — despawn themselves after a short life.
+pub fn nitro_particle_spawn_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    nitro: Res<NitroState>,
+    mut spawn_timer: ResMut<NitroParticleTimer>,
+    query: Query<&Transform, With<Car>>,
+) {
+    let nitro_active = keys.pressed(KeyCode::KeyN) && nitro.amount > 0.0;
+    if !nitro_active {
+        return;
+    }
+    spawn_timer.0.tick(time.delta());
+    if !spawn_timer.0.finished() {
+        return;
+    }
+
+    let Ok(car_transform) = query.single() else { return; };
+
+    for side in [-0.4_f32, 0.4] {
+        let offset = car_transform.rotation * Vec3::new(side, 0.3, 2.0);
+        let pos = car_transform.translation + offset;
+        let backward = car_transform.rotation * Vec3::new(0.0, 0.0, 1.0);
+
+        commands.spawn((
+            NitroParticle {
+                velocity: backward * 6.0 + Vec3::new(0.0, 1.0, 0.0),
+                lifetime: Timer::from_seconds(0.4, TimerMode::Once),
+            },
+            Mesh3d(meshes.add(Sphere::new(0.15))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgba(0.4, 0.8, 1.0, 0.9),
+                emissive: Color::srgb(0.3, 0.6, 1.0).into(),
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(pos),
+        ));
+    }
+}
+
+pub fn nitro_particle_update_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(Entity, &mut Transform, &mut NitroParticle, &MeshMaterial3d<StandardMaterial>)>,
+) {
+    for (entity, mut transform, mut particle, mat_handle) in query.iter_mut() {
+        particle.lifetime.tick(time.delta());
+        transform.translation += particle.velocity * time.delta_secs();
+        let t = particle.lifetime.fraction();
+        transform.scale = Vec3::splat((1.0 - t).max(0.05));
+        if let Some(mat) = materials.get_mut(&mat_handle.0) {
+            mat.base_color.set_alpha(1.0 - t);
+        }
+        if particle.lifetime.finished() {
+            commands.entity(entity).despawn();
+        }
+    }
 }
