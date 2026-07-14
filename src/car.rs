@@ -255,7 +255,7 @@ pub fn nitro_particle_spawn_system(
         return;
     }
     spawn_timer.0.tick(time.delta());
-    if !spawn_timer.0.finish() {
+    if !spawn_timer.0.is_finished() {
         return;
     }
 
