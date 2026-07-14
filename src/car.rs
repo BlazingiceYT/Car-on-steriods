@@ -255,7 +255,7 @@ pub fn nitro_particle_spawn_system(
         return;
     }
     spawn_timer.0.tick(time.delta());
-    if !spawn_timer.0.finished() {
+    if !spawn_timer.0.finish() {
         return;
     }
 
@@ -297,7 +297,7 @@ pub fn nitro_particle_update_system(
         if let Some(mat) = materials.get_mut(&mat_handle.0) {
             mat.base_color.set_alpha(1.0 - t);
         }
-        if particle.lifetime.finished() {
+        if particle.lifetime.finish() {
             commands.entity(entity).despawn();
         }
     }
