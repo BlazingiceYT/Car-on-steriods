@@ -25,7 +25,7 @@ pub const SPAWN_X: f32 = 0.0;
 pub const SPAWN_Z: f32 = 15.0;
 
 const CAR_MODEL_SCALE: f32 = 1.0;
-const CAR_MODEL_YAW_OFFSET: f32 = std::f32::consts::FRAC_PI_2;
+const CAR_MODEL_YAW_OFFSET: f32 = 0.0;
 const CAR_MODEL_Y_OFFSET: f32 = 0.0;
 
 #[derive(Component, Debug, Default)]
