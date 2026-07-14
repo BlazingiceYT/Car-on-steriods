@@ -11,9 +11,7 @@
 
 ## What's coming next (say the word and I'll build it)
 - AI traffic cars
-- Nitro particle trail
 - Tyre marks
-- On-screen HUD (speed, FPS, drift/air alerts)
 - Your real map, once you're ready to design it
 
 ---
