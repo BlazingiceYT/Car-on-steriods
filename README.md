@@ -1,4 +1,4 @@
-# BlazingIce — Bevy/WASM port
+# Cars on steroids ☠️
 
 ## What's working right now
 - Your car: loads `assets/car.glb` if it's there, automatically falls back to a
