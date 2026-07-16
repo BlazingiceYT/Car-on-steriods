@@ -65,6 +65,19 @@ const CAR_MODEL_YAW_OFFSET: f32 = std::f32::consts::FRAC_PI_2;
 const CAR_MODEL_Y_OFFSET: f32 = 0.0;
 ```
 
+
+## Part 3.5 — Adding your map.glb
+
+Drop your map model into `assets/` named exactly `map.glb`. The current
+`assets/map.glb` uses the glTF `KHR_materials_clearcoat` material extension,
+so the Bevy dependency enables `pbr_multi_layer_material_textures`. Without
+that feature, Bevy can reject the imported scene and the game will show the
+placeholder grid instead.
+
+After changing the map file, rebuild the web bundle and copy `assets/` into
+`web/` again so the browser version serves the same `map.glb` as your local
+project.
+
 ## Part 4 — Build for the web and publish on GitHub Pages
 
 Open a terminal **inside this project folder** (the one with `Cargo.toml`
