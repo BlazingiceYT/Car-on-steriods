@@ -40,7 +40,7 @@ pub fn setup_world(
         FallbackGround,
         Visibility::Hidden,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(TRACK_SIZE, TRACK_SIZE))),
-        MeshMaterial3d(materials.add(Color::srgb(0.13, 0.13, 0.15))),
+        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.0, 0.0))),
     ));
 
     let line_material = materials.add(StandardMaterial {
