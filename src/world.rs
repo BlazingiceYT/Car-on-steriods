@@ -1,7 +1,7 @@
 use bevy::asset::LoadState;
-use bevy::gltf::GltfAssetLabel;
+use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
+use bevy::world_serialization::WorldAssetRoot;
 
 pub const TRACK_SIZE: f32 = 300.0;
 const GRID_SPACING: f32 = 20.0;
@@ -20,21 +20,24 @@ pub struct MapModel;
 #[derive(Component)]
 pub struct FallbackGround;
 
+#[derive(Resource)]
+pub struct MapAsset {
+    handle: Handle<Gltf>,
+    scene_spawned: bool,
+    fallback_shown: bool,
+}
+
 pub fn setup_world(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let map_scene: Handle<WorldAsset> =
-        asset_server.load(GltfAssetLabel::Scene(0).from_asset("map.glb"));
-    commands.spawn((
-        MapModel,
-        WorldAssetRoot(map_scene),
-        Transform::from_xyz(0.0, MAP_MODEL_Y_OFFSET, 0.0)
-            .with_scale(Vec3::splat(MAP_MODEL_SCALE))
-            .with_rotation(Quat::from_rotation_y(MAP_MODEL_YAW_OFFSET)),
-    ));
+    commands.insert_resource(MapAsset {
+        handle: asset_server.load("map.glb"),
+        scene_spawned: false,
+        fallback_shown: false,
+    });
 
     commands.spawn((
         FallbackGround,
@@ -81,15 +84,53 @@ pub fn setup_world(
 }
 
 pub fn map_model_fallback_system(
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
-    map_query: Query<&WorldAssetRoot, With<MapModel>>,
+    gltfs: Res<Assets<Gltf>>,
+    mut map_asset: ResMut<MapAsset>,
     mut fallback_query: Query<&mut Visibility, With<FallbackGround>>,
 ) {
-    let Ok(scene_root) = map_query.single() else { return; };
+    if map_asset.scene_spawned || map_asset.fallback_shown {
+        return;
+    }
 
-    if let Some(LoadState::Failed(_)) = asset_server.get_load_state(&scene_root.0) {
-        for mut visibility in fallback_query.iter_mut() {
-            *visibility = Visibility::Visible;
+    match asset_server.get_load_state(&map_asset.handle) {
+        Some(LoadState::Loaded) => {
+            let Some(gltf) = gltfs.get(&map_asset.handle) else {
+                return;
+            };
+            let Some(scene) = gltf
+                .default_scene
+                .clone()
+                .or_else(|| gltf.scenes.first().cloned())
+            else {
+                warn!("map.glb loaded, but it does not contain a scene to spawn");
+                show_fallback_grid(&mut fallback_query);
+                map_asset.fallback_shown = true;
+                return;
+            };
+
+            commands.spawn((
+                MapModel,
+                WorldAssetRoot(scene),
+                Transform::from_xyz(0.0, MAP_MODEL_Y_OFFSET, 0.0)
+                    .with_scale(Vec3::splat(MAP_MODEL_SCALE))
+                    .with_rotation(Quat::from_rotation_y(MAP_MODEL_YAW_OFFSET)),
+            ));
+            map_asset.scene_spawned = true;
+            info!("map.glb loaded and spawned");
         }
+        Some(LoadState::Failed(error)) => {
+            error!("Failed to load map.glb: {error:?}");
+            show_fallback_grid(&mut fallback_query);
+            map_asset.fallback_shown = true;
+        }
+        _ => {}
+    }
+}
+
+fn show_fallback_grid(fallback_query: &mut Query<&mut Visibility, With<FallbackGround>>) {
+    for mut visibility in fallback_query.iter_mut() {
+        *visibility = Visibility::Visible;
     }
 }
